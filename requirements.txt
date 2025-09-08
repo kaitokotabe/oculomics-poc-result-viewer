@@ -1,0 +1,5 @@
+streamlit==1.45.0
+supabase==2.4.0
+reportlab==4.2.2
+python-barcode==0.15.1
+Pillow==10.4.0
