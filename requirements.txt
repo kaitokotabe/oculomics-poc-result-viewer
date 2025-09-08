@@ -1,5 +1,5 @@
-streamlit==1.45.0
-supabase==2.4.0
-reportlab==4.2.2
+streamlit==1.49.1
+supabase==2.18.1
+reportlab==4.4.3
 python-barcode==0.15.1
-Pillow==10.4.0
+Pillow==11.3.0
