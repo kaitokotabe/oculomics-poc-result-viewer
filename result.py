@@ -13,6 +13,21 @@ from supabase import create_client
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+import streamlit as st
+
+st.subheader("Secrets 読み込みチェック")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY")
+
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    st.success("Secrets が読み込まれました ✅")
+    st.write(f"SUPABASE_URL: {SUPABASE_URL[:30]}...")  # 一部だけ表示
+    st.write(f"SUPABASE_ANON_KEY: {SUPABASE_ANON_KEY[:10]}...")  # 一部だけ
+else:
+    st.error("Secrets が読み込まれていません ⚠️")
+
+
+'''
 # --- Supabase 設定 ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]  # RLS用
@@ -299,4 +314,6 @@ if st.button("結果を表示する"):
             📧 support@example.com
             """
         )
+
+'''
 
