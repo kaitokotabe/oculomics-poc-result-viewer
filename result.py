@@ -27,9 +27,10 @@ pdfmetrics.registerFont(TTFont('IPAexGothic', FONT_PATH))
 # --- タイトル ---
 st.title("健康チェック結果ページ 🩺")
 
-# --- URLのパラメータからUUID取得 ---
+# --- URLパラメータからUUIDとタイムスタンプ取得 ---
 params = st.query_params
 uuid = params.get("uuid", [""])
+ts = params.get("ts", [None]) # 過去履歴を指定する場合
 
 if not uuid:
     st.warning("アクセス番号（バーコード）を確認できませんでした。")
@@ -46,7 +47,7 @@ def generate_barcode(code: str) -> Image.Image:
     buffer.seek(0)
     return Image.open(buffer)
 
-# --- 入力フォーム ---
+# --- 誕生日確認 ---
 st.write("結果をご覧いただくために、ご本人確認をお願いします。")
 bday_input = st.date_input(
     "誕生日を入力してください",  
@@ -67,6 +68,24 @@ if st.button("結果を表示する"):
 
     if response.data:
         data = response.data[0]
+        st.success("本人確認ができました ✅ 結果をご確認ください。")
+
+        # --- 過去履歴一覧表示 ---
+        history_response = supabase.table("questionnaires").select("timestamp") \
+            .eq("uuid", uuid).eq("bday", bday_input).order("timestamp", desc=True).execute()
+        
+        if history_response.data:
+            st.subheader("📅 過去履歴")
+            for h in history_response.data:
+                ts_value = h["timestamp"]
+                display_date = datetime.datetime.fromisoformat(ts_value).strftime("%Y-%m-%d")
+                if ts_value == data["timestamp"]:
+                    st.markdown(f"- **{display_date} (表示中)**")
+                else:
+                    # 履歴リンク
+                    history_link = f"?uuid={uuid}&ts={ts_value}"
+                    st.markdown(f"- [{display_date}]({history_link})")
+
         st.success("本人確認ができました ✅ 結果をご確認ください。")
 
         # 実年齢計算
