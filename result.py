@@ -256,7 +256,7 @@ if st.button("結果を表示する"):
         # --- バーコード ---
         uuid_value = questionnaire_data.get('uuid')
         if uuid_value:
-            p.drawString(20 * mm, y_cursor, f"受付番号: {uuid_value}")
+            p.drawString(20 * mm, y_cursor, f"受付番号:")
             y_cursor -= 15 * mm
             try:
                 barcode_obj = barcode.get_barcode_class('code128')(uuid_value, writer=ImageWriter())
