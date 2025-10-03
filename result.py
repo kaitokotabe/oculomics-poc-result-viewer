@@ -20,6 +20,21 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]  # RLS用
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+# --- セッション状態の初期化 ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'feedback_submitted_success' not in st.session_state:
+    st.session_state.feedback_submitted_success = False
+if 'uuid_value' not in st.session_state:
+    st.session_state.uuid_value = ""
+if 'questionnaire_data' not in st.session_state:
+    st.session_state.questionnaire_data = None
+if 'all_history' not in st.session_state:
+    st.session_state.all_history = None
+if 'target_timestamp' not in st.session_state:
+    st.session_state.target_timestamp = None
+
+
 # フォント登録
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "ipaexg.ttf")
 if not os.path.exists(FONT_PATH):
@@ -49,46 +64,204 @@ def generate_barcode(code: str) -> Image.Image:
     buffer.seek(0)
     return Image.open(buffer)
 
-# --- 誕生日確認 ---
-st.write("結果をご覧いただくために、ご本人確認をお願いします。")
-bday_input = st.date_input(
-    "誕生日を入力してください",  
-    min_value=datetime.date(1900, 1, 1),
-    key="bday_input"
-)
 
-if st.button("結果を表示する"):
-    if not bday_input:
-        st.error("誕生日を入力してください。")
-        st.stop()
-
-    # --- RLS対応で直接WHERE条件 ---
-    response_q = supabase.table("questionnaires").select("*") \
-        .eq("uuid", uuid_value) \
-        .eq("bday", bday_input) \
-        .execute()
-    
-    if not response_q.data:
-        st.warning("入力された情報と一致する問診がありませんでした。")
-        st.stop()
-    
-    # URLにtsパラメータがあればその時点、なければ最新の問診情報を対象とする
-    target_timestamp = ts[0] if ts[0] else response_q.data[0]['timestamp']
-    
-    # 対象となる問診データを取得
-    questionnaire = next((q for q in response_q.data if q['timestamp'] == target_timestamp), None)
-    if not questionnaire:
-        st.error("指定された履歴が見つかりませんでした。")
-        st.stop()
+# --- フィードバックをSupabaseに保存する関数 ---
+def save_feedback(uuid, ux_rating, duration_rating, ux_comment, 
+                  info_quality, motivation, result_comment, 
+                  recommendation_score, healthcheck, free_comment):
+    """
+    更新されたフィードバック項目をSupabaseの 'feedback' テーブルに挿入する
+    """
+    try:
+        # Supabaseへのデータ挿入
+        supabase.table("feedback").insert({
+            "uuid": uuid,
+            "ux_rating": ux_rating,
+            "duration_rating": duration_rating,
+            "ux_comment": ux_comment,
+            "info_quality_rating": info_quality,
+            "motivation_rating": motivation,
+            "result_comment": result_comment,
+            "recommendation_score": recommendation_score,
+            "healthcheck_rating": healthcheck,
+            "free_comment": free_comment,
+            "created_at": datetime.datetime.now().isoformat()
+        }).execute()
         
+        # ★ 修正点: 保存成功フラグを設定 ★
+        st.session_state['feedback_submitted_success'] = True
+        return True
+
+    except Exception as e:
+        # 失敗フラグを設定し、エラー内容をログに出力
+        st.session_state['feedback_submitted_success'] = False
+        st.error(f"データベースへの保存中にエラーが発生しました: {e}") # ユーザーにエラーを通知
+        return False
+
+# --- フィードバックフォームを表示する関数 ---
+def show_feedback_form(uuid_value):
+    # セッション状態の初期化
+    if 'feedback_submitted_success' not in st.session_state:
+        st.session_state['feedback_submitted_success'] = False
+
+    st.markdown("---")
+    
+    if st.session_state.get('feedback_submitted_success', False):
+        st.success("✅ フィードバックの送信が完了しました。ご協力ありがとうございました！")
+        return # フォームを再表示しないようにここで処理を終了
+
+    st.subheader("アンケートにご協力ください 🙏")
+    st.caption("今後のサービス改善のため、結果に関するご意見をお聞かせください。")
+    
+    # st.formを使用して、送信ボタンが押されたときだけ処理を実行
+    with st.form(key='feedback_form'):
+        
+        # 1. 使いやすさ（UX）
+        st.markdown("#### 1. 使いやすさ（UX）")
+        ux_rating = st.radio(
+            "問診から結果表示までの**全体的なフロー**について満足度を教えてください。",
+            options=[5, 4, 3, 2, 1],
+            format_func=lambda x: {5: "非常に満足", 4: "満足", 3: "普通", 2: "不満", 1: "非常に不満"}[x],
+            horizontal=True,
+            index=None,
+            key='ux_rating'
+        )
+
+        duration_rating = st.radio(
+            "問診からQR受け取りまでにかかった時間についてどう感じましたか？",
+            options=[5, 4, 3, 2, 1],
+            format_func=lambda x: {5: "非常に長い", 4: "長い", 3: "普通", 2: "短い", 1: "非常に短い"}[x],
+            horizontal=True,
+            index=None,
+            key='duration_rating'
+        )
+
+        ux_comment = st.text_area(
+            "操作中に戸惑った点、または改善してほしい点があれば教えてください（自由記述）",
+            key='ux_comment'
+        )
+
+        # 2. 情報提供の質
+        st.markdown("#### 2. 情報提供の質")
+        info_quality = st.radio(
+            "AI解析結果は**理解しやすく、納得感**がありましたか？",
+            options=[5, 4, 3, 2, 1],
+            format_func=lambda x: {5: "強くそう思う", 4: "そう思う", 3: "どちらでもない", 2: "あまりそう思わない", 1: "全くそう思わない"}[x],
+            horizontal=True,
+            index=None,
+            key='info_quality'
+        )
+
+        motivation = st.radio(
+            "専門家の受診や生活習慣の改善など、行動を起こそうと思いましたか？",
+            options=[5, 4, 3, 2, 1],
+            format_func=lambda x: {5: "強くそう思う", 4: "そう思う", 3: "どちらでもない", 2: "あまりそう思わない", 1: "全くそう思わない"}[x],
+            horizontal=True,
+            index=None,
+            key='motivation'
+        )
+        
+        result_comment = st.text_area(
+            "結果についての説明（Web上のテキストなど）で、特に分かりにくかった箇所があれば教えてください（自由記述）",
+            key='result_comment'
+        )
+
+        # 3. 事業化の可能性 (NPS)
+        st.markdown("#### 3. 推奨度")
+        recommendation_score = st.slider(
+            "この検査を**他の施設や知人に推奨したい**と思いますか？",
+            min_value=0, max_value=10, step=1,
+            value=0,
+            help="0点：全く推奨しない、10点：強く推奨する"
+        )
+
+        healthcheck = st.radio(
+            "この検査が今後、定期的な健康診断に追加されるとしたらどう思いますか？",
+            options=[5, 4, 3, 2, 1],
+            format_func=lambda x: {5: "とても賛成", 4: "賛成", 3: "どちらでもない", 2: "反対", 1: "とても反対"}[x],
+            horizontal=True,
+            index=None,
+            key='healthcheck'
+        )
+        
+        # 4. 自由記述
+        st.markdown("#### 4. 自由記述")
+        free_comment = st.text_area(
+            "改善してほしい点、分かりにくかった点、その他ご意見があればご自由にお書きください。",
+            key='free_comment'
+        )
+        
+        # 送信ボタン
+        submitted = st.form_submit_button("フィードバックを送信する")
+
+        if submitted:
+            # 必須項目のチェック
+            if ux_rating is None or duration_rating is None or info_quality is None or motivation is None or healthcheck is None:
+                st.error("評価の項目（5段階評価・推奨度）はすべて選択してください。")
+            else:
+                # 必須項目が入力されていれば保存処理を呼び出す
+                success = save_feedback(
+                    uuid_value, ux_rating, duration_rating, ux_comment,
+                    info_quality, motivation, result_comment,
+                    recommendation_score, healthcheck, free_comment
+                )
+                
+                # 保存が成功した場合のみ画面を再描画して成功メッセージを表示
+                if success:
+                    st.rerun()
+
+# --- 誕生日確認 ---
+if not st.session_state.authenticated:
+    st.write("結果をご覧いただくために、ご本人確認をお願いします。")
+    bday_input = st.date_input(
+        "誕生日を入力してください",  
+        min_value=datetime.date(1900, 1, 1),
+        key="bday_input"
+    )
+
+    if st.button("結果を表示する"):
+        if not bday_input:
+            st.error("誕生日を入力してください。")
+        else:
+            # Supabaseに問診データを確認しにいく
+            response_q = supabase.table("questionnaires").select("*") \
+                .eq("uuid", uuid_value) \
+                .eq("bday", bday_input.isoformat()) \
+                .execute()
+            
+            if not response_q.data:
+                st.warning("入力された情報と一致する問診がありませんでした。")
+            else:
+                # ★★★ここが最重要★★★
+                # 認証に成功したら「許可証」を発行して、ページをリロード
+                st.session_state.authenticated = True
+                st.session_state.all_history = response_q.data # 取得した履歴も記憶
+                params = st.query_params
+                ts = params.get("ts") # URLにtsがあればその文字列、なければNoneが返る
+                st.session_state.target_timestamp = ts if ts else response_q.data[0]['timestamp']
+
+                st.rerun()
+
+else:            
+
     st.success("本人確認ができました ✅ 結果をご確認ください。")
+
+    questionnaire = next(
+        (q for q in st.session_state.all_history if q['timestamp'] == st.session_state.target_timestamp), 
+        None
+    )
+
+    if not questionnaire:
+        st.error("指定された履歴のデータが見つかりませんでした。")
+        st.stop()
 
     # --- 過去履歴一覧表示 (元のコードをそのままここに配置) ---
     st.subheader("📅 過去履歴")
-    for h in response_q.data: # response_qには全履歴が入っている
+    for h in st.session_state.all_history: # response_qには全履歴が入っている
         ts_value = h["timestamp"]
         display_date = datetime.datetime.fromisoformat(ts_value).strftime("%Y-%m-%d %H:%M")
-        if ts_value == target_timestamp:
+
+        if ts_value == st.session_state.target_timestamp:
             st.markdown(f"- **{display_date} (表示中)**")
         else:
             history_link = f"?uuid={uuid_value}&ts={ts_value}" # uuid_valueを使用
@@ -97,7 +270,7 @@ if st.button("結果を表示する"):
     # 表示中の履歴に対応する結果レコードを取得
     response_res = supabase.table("results").select("*") \
     .eq("questionnaire_uuid", uuid_value) \
-    .eq("captured_datetime", target_timestamp) \
+    .eq("captured_datetime", st.session_state.target_timestamp) \
     .execute()
 
     if not response_res.data:
@@ -170,14 +343,22 @@ if st.button("結果を表示する"):
 
     age_cols = st.columns(2)
     if right_eye_data and right_eye_data.get("fundus_age") is not None:
-        age_cols[0].metric(label="右眼の眼底年齢", value=f"{right_eye_data['fundus_age']} 歳",
-                         delta=f"{right_eye_data['fundus_age'] - real_age} 歳")
+        age_cols[0].metric(
+            label="右眼の眼底年齢",
+            value=f"{right_eye_data['fundus_age']} 歳",
+            delta=f"{right_eye_data['fundus_age'] - real_age} 歳",
+            delta_color="inverse"
+        )
     else:
         age_cols[0].info("右眼の年齢データなし")
 
     if left_eye_data and left_eye_data.get("fundus_age") is not None:
-        age_cols[1].metric(label="左眼の眼底年齢", value=f"{left_eye_data['fundus_age']} 歳",
-                         delta=f"{left_eye_data['fundus_age'] - real_age} 歳")
+        age_cols[1].metric(
+            label="左眼の眼底年齢",
+            value=f"{left_eye_data['fundus_age']} 歳",
+            delta=f"{left_eye_data['fundus_age'] - real_age} 歳",
+            delta_color="inverse"
+        )
     else:
         age_cols[1].info("左眼の年齢データなし")
     st.caption("Δは実年齢との差")
@@ -259,7 +440,7 @@ if st.button("結果を表示する"):
         # --- バーコード ---
         uuid_value = questionnaire_data.get('uuid')
         if uuid_value:
-            p.drawString(20 * mm, y_cursor, f"受付番号:")
+            p.drawString(20 * mm, y_cursor, f"受付番号: ")
             y_cursor -= 15 * mm
             try:
                 barcode_obj = barcode.get_barcode_class('code128')(uuid_value, writer=ImageWriter())
@@ -374,3 +555,25 @@ if st.button("結果を表示する"):
         file_name=f"Health_Report_{uuid_value}.pdf",
         mime="application/pdf",
     )
+
+    st.markdown("---")
+
+    # 1. Supabaseのfeedbackテーブルに該当UUIDのレコードがあるか確認
+    try:
+        # uuidに一致するレコードを検索
+        response_fb = supabase.table("feedback").select("uuid").eq("uuid", uuid_value).execute()
+        
+        # レコードの数で回答済みか判定
+        is_feedback_submitted = len(response_fb.data) > 0
+
+    except Exception as e:
+        # 接続エラーやテーブルエラーの場合、念のためフォームは非表示にしておく
+        st.error("フィードバック履歴の確認中にエラーが発生しました。")
+        is_feedback_submitted = True # エラー時は表示しない
+
+    if not is_feedback_submitted:
+        # 未回答の場合のみフォームを表示
+        show_feedback_form(uuid_value)
+    else:
+        # 回答済みの場合、またはエラー発生時にメッセージを表示
+        st.info("✅ アンケートは回答済みです。ご協力ありがとうございました。")
