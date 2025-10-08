@@ -441,7 +441,7 @@ else:
         uuid_value = questionnaire_data.get('uuid')
         if uuid_value:
             p.drawString(20 * mm, y_cursor, f"受付番号: ")
-            y_cursor -= 25 * mm
+            y_cursor -= 21 * mm
             try:
                 barcode_obj = barcode.get_barcode_class('code128')(uuid_value, writer=ImageWriter())
                 barcode_buffer = io.BytesIO()
