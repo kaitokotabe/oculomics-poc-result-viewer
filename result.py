@@ -448,10 +448,10 @@ else:
                 barcode_obj.write(barcode_buffer)
                 barcode_buffer.seek(0)
                 barcode_img = ImageReader(Image.open(barcode_buffer))
-                p.drawImage(barcode_img, 20 * mm, y_cursor, width=80*mm, height=17.8*mm)
+                p.drawImage(barcode_img, 20 * mm, y_cursor, width=80*mm, height=17.5*mm)
                 y_cursor -= 5 * mm
                 p.setFont('IPAexGothic', 8)
-                p.drawString(20 * mm, y_cursor, "次回利用時にこのバーコードをカメラに読ませてください")
+                p.drawString(20 * mm, y_cursor, "次回以降こちらの受付IDをご利用ください。問診などを省略出来て便利です。")
             except Exception as e:
                 print(f"Barcode generation failed: {e}")
         y_cursor -= 15 * mm
