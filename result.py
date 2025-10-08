@@ -441,15 +441,15 @@ else:
         uuid_value = questionnaire_data.get('uuid')
         if uuid_value:
             p.drawString(20 * mm, y_cursor, f"受付番号: ")
-            y_cursor -= 15 * mm
+            y_cursor -= 25 * mm
             try:
                 barcode_obj = barcode.get_barcode_class('code128')(uuid_value, writer=ImageWriter())
                 barcode_buffer = io.BytesIO()
                 barcode_obj.write(barcode_buffer)
                 barcode_buffer.seek(0)
                 barcode_img = ImageReader(Image.open(barcode_buffer))
-                p.drawImage(barcode_img, 20 * mm, y_cursor, width=80*mm, height=18*mm)
-                y_cursor -= 11 * mm
+                p.drawImage(barcode_img, 20 * mm, y_cursor, width=80*mm, height=12*mm)
+                y_cursor -= 5 * mm
                 p.setFont('IPAexGothic', 8)
                 p.drawString(20 * mm, y_cursor, "次回以降こちらの受付IDをご利用ください。問診などを省略出来て便利です。")
             except Exception as e:
