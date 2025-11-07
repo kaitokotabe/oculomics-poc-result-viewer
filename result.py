@@ -227,6 +227,7 @@ if not st.session_state.authenticated:
             response_q = supabase.table("questionnaires").select("*") \
                 .eq("uuid", uuid_value) \
                 .eq("bday", bday_input.isoformat()) \
+                .order("timestamp", desc=True) \
                 .execute()
             
             if not response_q.data:
