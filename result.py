@@ -46,14 +46,31 @@ st.title("健康チェック結果ページ 🩺")
 
 # --- URLパラメータからUUIDとタイムスタンプ取得 ---
 params = st.query_params
-uuid = params.get("uuid", [""])
-ts = params.get("ts", [None]) # 過去履歴を指定する場合
 
-if not uuid:
+# 1. 'uuid' の処理 (セッションに保存/復元)
+uuid_from_url = params.get("uuid", None)
+if uuid_from_url:
+    st.session_state.uuid_value_from_url = uuid_from_url
+uuid_value = st.session_state.get("uuid_value_from_url", None)
+
+if not uuid_value:
     st.warning("アクセス番号（バーコード）を確認できませんでした。")
     st.stop()
 
-uuid_value = uuid
+# 2. 'ts' の処理 (セッションに保存/復元)
+ts_from_url = params.get("ts", None) # 例: '...T... 00:00' (+がスペースになる)  
+
+# ★★★ ここで '+' を復元する ★★★
+if ts_from_url and ts_from_url.endswith(" 00:00"):
+    # 末尾の ' 00:00' を '+00:00' に置換
+    ts_from_url = ts_from_url.rsplit(' ', 1)[0] + "+00:00"
+# ★★★ 修正ここまで ★★★
+
+if ts_from_url:
+    st.session_state.ts_value_from_url = ts_from_url
+    
+# 3. セッションに保存された 'ts' を使う
+st.session_state.target_timestamp_from_url = st.session_state.get("ts_value_from_url", None)
 
 # バーコード生成関数
 def generate_barcode(code: str) -> Image.Image:
@@ -234,19 +251,59 @@ if not st.session_state.authenticated:
                 st.warning("入力された情報と一致する問診がありませんでした。")
             else:
                 # ★★★ここが最重要★★★
-                # 認証に成功したら「許可証」を発行して、ページをリロード
                 st.session_state.authenticated = True
                 st.session_state.all_history = response_q.data # 取得した履歴も記憶
-                params = st.query_params
-                ts = params.get("ts") # URLにtsがあればその文字列、なければNoneが返る
-                st.session_state.target_timestamp = ts if ts else response_q.data[0]['timestamp']
+                
+                # ★★★ 修正ここから ★★★
+                # 1. セッションから 'ts' を読み込む（スクリプト先頭で *修復・保存* したもの）
+                ts_from_session = st.session_state.get("target_timestamp_from_url", None)
+                
+                # 2. デフォルト（最新）の T付き ts を取得
+                default_ts_with_t = response_q.data[0]['timestamp']
+
+                # 3. セッションに'ts'があればそれを使い、なければ最新を使う
+                target_ts = ts_from_session if ts_from_session else default_ts_with_t
+                
+                # 4. セッションに target_timestamp を保存
+                st.session_state.target_timestamp = target_ts
+                
+                # 5. 使った ts_value_from_url はクリアする
+                if "ts_value_from_url" in st.session_state:
+                    del st.session_state.ts_value_from_url
+                if "target_timestamp_from_url" in st.session_state:
+                    del st.session_state.target_timestamp_from_url
+                # ★★★ 修正ここまで ★★★
 
                 st.rerun()
 
 else:            
+    # ★★★ 修正ここから (バグ修正の最重要箇所) ★★★
+    # 認証済みのユーザーが過去履歴をクリックした場合（tsがURLにある場合）、
+    # target_timestamp をここで更新する
+    
+    # 1. スクリプト先頭で修復・保存した ts を読み込む
+    ts_from_session = st.session_state.get("target_timestamp_from_url", None)
+    
+    if ts_from_session:
+        # URLに 'ts' が指定されていた場合
+        st.session_state.target_timestamp = ts_from_session
+        
+        # 使った ts_value_from_url はクリアする
+        if "ts_value_from_url" in st.session_state:
+            del st.session_state.ts_value_from_url
+        if "target_timestamp_from_url" in st.session_state:
+            del st.session_state.target_timestamp_from_url
+    
+    # もし target_timestamp がまだ設定されていなければ（QR直後など）、
+    # all_history の最新（[0]番目）を使う
+    if "target_timestamp" not in st.session_state or not st.session_state.target_timestamp:
+        st.session_state.target_timestamp = st.session_state.all_history[0]['timestamp']
+    # ★★★ 修正ここまで ★★★
+
 
     st.success("本人確認ができました ✅ 結果をご確認ください。")
 
+    # T付き同士で比較
     questionnaire = next(
         (q for q in st.session_state.all_history if q['timestamp'] == st.session_state.target_timestamp), 
         None
@@ -256,19 +313,23 @@ else:
         st.error("指定された履歴のデータが見つかりませんでした。")
         st.stop()
 
-    # --- 過去履歴一覧表示 (元のコードをそのままここに配置) ---
+    # T付き同士で比較
     st.subheader("📅 過去履歴")
-    for h in st.session_state.all_history: # response_qには全履歴が入っている
-        ts_value = h["timestamp"]
-        display_date = datetime.datetime.fromisoformat(ts_value).strftime("%Y-%m-%d %H:%M")
+    for h in st.session_state.all_history: # all_history には T付き の元データが入っている
+        
+        ts_value_with_t = h["timestamp"] # 'T'付き
+        
+        display_date = datetime.datetime.fromisoformat(ts_value_with_t).strftime("%Y-%m-%d %H:%M")
 
-        if ts_value == st.session_state.target_timestamp:
+        # T付き 同士で比較
+        if ts_value_with_t == st.session_state.target_timestamp:
             st.markdown(f"- **{display_date} (表示中)**")
         else:
-            history_link = f"?uuid={uuid_value}&ts={ts_value}" # uuid_valueを使用
+            # リンクには T付き の元データを渡す
+            history_link = f"?uuid={uuid_value}&ts={ts_value_with_t}"
             st.markdown(f"- [{display_date}]({history_link})")
 
-    # 表示中の履歴に対応する結果レコードを取得
+    # T付きのまま検索
     response_res = supabase.table("results").select("*") \
     .eq("questionnaire_uuid", uuid_value) \
     .eq("captured_datetime", st.session_state.target_timestamp) \
