@@ -230,51 +230,74 @@ def show_feedback_form(uuid_value):
 # --- 誕生日確認 ---
 if not st.session_state.authenticated:
     st.write("結果をご覧いただくために、ご本人確認をお願いします。")
-    bday_input = st.date_input(
-        "誕生日を入力してください",  
-        min_value=datetime.date(1900, 1, 1),
-        key="bday_input"
-    )
+    
+    st.write("誕生日を選択してください")
+    
+    # 横に3つ並べるための枠組みを作成
+    col1, col2, col3 = st.columns(3)
+    
+    current_year = datetime.date.today().year
+    
+    with col1:
+        # 1900年から今年まで。デフォルト値を1980年にしておく（インデックスで指定）
+        # 新しい年から古い年へ降順（大きい数字から小さい数字）にするのもオススメです
+        years = list(range(current_year, 1899, -1))
+        default_index = years.index(1980) if 1980 in years else 0
+        year = st.selectbox("年", years, index=default_index)
+        
+    with col2:
+        month = st.selectbox("月", range(1, 13))
+        
+    with col3:
+        day = st.selectbox("日", range(1, 32))
 
-    if st.button("結果を表示する"):
-        if not bday_input:
-            st.error("誕生日を入力してください。")
-        else:
-            # Supabaseに問診データを確認しにいく
-            response_q = supabase.table("questionnaires").select("*") \
-                .eq("uuid", uuid_value) \
-                .eq("bday", bday_input.isoformat()) \
-                .order("timestamp", desc=True) \
-                .execute()
-            
-            if not response_q.data:
-                st.warning("入力された情報と一致する問診がありませんでした。")
+    # 選ばれた年月日を1つの日付データにまとめる
+    try:
+        bday_input = datetime.date(year, month, day)
+
+        if st.button("結果を表示する"):
+            if not bday_input:
+                st.error("誕生日を入力してください。")
             else:
-                # ★★★ここが最重要★★★
-                st.session_state.authenticated = True
-                st.session_state.all_history = response_q.data # 取得した履歴も記憶
+                # Supabaseに問診データを確認しにいく
+                response_q = supabase.table("questionnaires").select("*") \
+                    .eq("uuid", uuid_value) \
+                    .eq("bday", bday_input.isoformat()) \
+                    .order("timestamp", desc=True) \
+                    .execute()
                 
-                # ★★★ 修正ここから ★★★
-                # 1. セッションから 'ts' を読み込む（スクリプト先頭で *修復・保存* したもの）
-                ts_from_session = st.session_state.get("target_timestamp_from_url", None)
-                
-                # 2. デフォルト（最新）の T付き ts を取得
-                default_ts_with_t = response_q.data[0]['timestamp']
+                if not response_q.data:
+                    st.warning("入力された情報と一致する問診がありませんでした。")
+                else:
+                    # ★★★ここが最重要★★★
+                    st.session_state.authenticated = True
+                    st.session_state.all_history = response_q.data # 取得した履歴も記憶
+                    
+                    # ★★★ 修正ここから ★★★
+                    # 1. セッションから 'ts' を読み込む（スクリプト先頭で *修復・保存* したもの）
+                    ts_from_session = st.session_state.get("target_timestamp_from_url", None)
+                    
+                    # 2. デフォルト（最新）の T付き ts を取得
+                    default_ts_with_t = response_q.data[0]['timestamp']
 
-                # 3. セッションに'ts'があればそれを使い、なければ最新を使う
-                target_ts = ts_from_session if ts_from_session else default_ts_with_t
-                
-                # 4. セッションに target_timestamp を保存
-                st.session_state.target_timestamp = target_ts
-                
-                # 5. 使った ts_value_from_url はクリアする
-                if "ts_value_from_url" in st.session_state:
-                    del st.session_state.ts_value_from_url
-                if "target_timestamp_from_url" in st.session_state:
-                    del st.session_state.target_timestamp_from_url
-                # ★★★ 修正ここまで ★★★
+                    # 3. セッションに'ts'があればそれを使い、なければ最新を使う
+                    target_ts = ts_from_session if ts_from_session else default_ts_with_t
+                    
+                    # 4. セッションに target_timestamp を保存
+                    st.session_state.target_timestamp = target_ts
+                    
+                    # 5. 使った ts_value_from_url はクリアする
+                    if "ts_value_from_url" in st.session_state:
+                        del st.session_state.ts_value_from_url
+                    if "target_timestamp_from_url" in st.session_state:
+                        del st.session_state.target_timestamp_from_url
+                    # ★★★ 修正ここまで ★★★
 
-                st.rerun()
+                    st.rerun()
+    
+    except ValueError:
+        # 2月30日など、存在しない日付が選ばれた場合のエラーハンドリング
+        st.error("正しい日付を選択してください")
 
 else:            
     # ★★★ 修正ここから (バグ修正の最重要箇所) ★★★
