@@ -473,8 +473,8 @@ else:
         elif level == "medium": st.warning(f"スコア: {score:.2f} (リスク：中 🟡 )")
         else: st.error(f"スコア: {score:.2f} (リスク：高 🔴 )")
 
-    # 2a. 緑内障リスク (左右別々に表示)
-    st.markdown("### 緑内障リスク")
+    # 2a. 視界の健康リスク (左右別々に表示)
+    st.markdown("### 視界の健康リスク")
     st.caption("左右の眼でリスクが異なる場合があるため、個別に表示しています。")
     glaucoma_cols = st.columns(2)
     with glaucoma_cols[0]:
@@ -654,9 +654,9 @@ else:
             p.drawString(120 * mm, y_cursor, f"左眼: {left_eye_data.get('fundus_age')} 歳")
         y_cursor -= 12 * mm
 
-        # 緑内障リスク
+        # 視界の健康リスク
         p.setFont('IPAexGothic', 11)
-        p.drawString(25 * mm, y_cursor, "緑内障リスク")
+        p.drawString(25 * mm, y_cursor, "視界の健康リスク")
         p.setFont('IPAexGothic', 10)
         if right_eye_data and right_eye_data.get('glaucoma_risk') is not None:
             p.drawString(70 * mm, y_cursor, f"右眼: {right_eye_data.get('glaucoma_risk'):.2f}")
