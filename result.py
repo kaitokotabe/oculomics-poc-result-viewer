@@ -14,6 +14,16 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import requests
 from io import BytesIO
+from athero_percentiles import (
+    build_athero_gauge_figure,
+    draw_athero_gauge_pdf,
+    format_peer_group_label,
+    format_relative_comparison_message,
+    format_relative_comparison_plain_text,
+    get_age_group,
+    lookup_percentiles,
+    score_to_percentile,
+)
 
 # --- Supabase 設定 ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -371,10 +381,14 @@ else:
         elif record.get('eye') == 'L':
             left_eye_data = record
 
-    # --- 実年齢の計算 ---
+    # --- 撮影時年齢の計算 ---
     birth_date = datetime.datetime.fromisoformat(questionnaire['bday']).date()
-    today = datetime.date.today()
-    real_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+    capture_datetime_str = questionnaire.get("timestamp") or st.session_state.target_timestamp
+    capture_date = datetime.datetime.fromisoformat(capture_datetime_str).date()
+    real_age = (
+        capture_date.year - birth_date.year
+        - ((capture_date.month, capture_date.day) < (birth_date.month, birth_date.day))
+    )
 
     st.warning("⚠️ この結果はAIによる健康リスク推定です。診断ではありません。こちらは現在東北大学において開発中のアルゴリズムを使用しております。")
     st.caption("気になる点がある場合は、医療機関にご相談ください。")
@@ -386,9 +400,7 @@ else:
     st.write(f"- 身長: {questionnaire.get('height', '未登録')} cm")
     st.write(f"- 体重: {questionnaire.get('weight', '未登録')} kg")
     st.write(f"- 健康状態: {questionnaire.get('health', '未登録')}")
-    if "timestamp" in questionnaire and questionnaire["timestamp"]:
-        capture_date = datetime.datetime.fromisoformat(questionnaire["timestamp"]).date()
-        st.write(f"- 撮影日: {capture_date}")
+    st.write(f"- 撮影日: {capture_date}")
 
     # 画像表示
     def load_image_from_url(url: str) -> Image.Image:
@@ -424,7 +436,7 @@ else:
 
     # 1. 眼底年齢 (左右別々に表示)
     st.markdown("### 👁️ 眼底年齢")
-    st.write(f"**実年齢**: {real_age}歳")
+    st.write(f"**撮影時年齢**: {real_age}歳")
 
     age_cols = st.columns(2)
     if right_eye_data and right_eye_data.get("fundus_age") is not None:
@@ -446,7 +458,7 @@ else:
         )
     else:
         age_cols[1].info("左眼の年齢データなし")
-    st.caption("Δは実年齢との差")
+    st.caption("Δは撮影時年齢との差")
     st.markdown("---")
 
     # 2. リスク評価
@@ -477,8 +489,8 @@ else:
             st.info("左眼のデータなし")
     st.markdown("---")
 
-    # 2b. 動脈硬化リスク (平均値を表示)
-    st.markdown("### 動脈硬化リスク")
+    # 2b. 血管健康リスク (平均値を表示)
+    st.markdown("### 血管健康リスク")
     atherosclerosis_scores = []
     if right_eye_data and right_eye_data.get("atherosclerosis_risk") is not None:
         atherosclerosis_scores.append(right_eye_data["atherosclerosis_risk"])
@@ -488,8 +500,37 @@ else:
     if atherosclerosis_scores:
         average_score = sum(atherosclerosis_scores) / len(atherosclerosis_scores)
         render_risk("左右の平均", average_score)
+
+        st.markdown("#### 同年代・同性との比較")
+        st.caption(
+            "※ 上のスコア（絶対評価）とは別の指標です。"
+            "絶対的なリスクが低くても、同年代・同性の中での位置は異なる場合があります。"
+        )
+        gender = questionnaire.get("gender")
+        if gender in ("M", "F"):
+            age_group = get_age_group(real_age)
+            ref_data = lookup_percentiles(gender, age_group)
+            if ref_data:
+                percentile = score_to_percentile(average_score, ref_data["percentiles"])
+                peer_label = format_peer_group_label(gender, age_group)
+                sample_size = ref_data["sample_size"]
+
+                st.plotly_chart(
+                    build_athero_gauge_figure(percentile),
+                    use_container_width=True,
+                )
+                st.markdown(format_relative_comparison_message(peer_label, percentile))
+                st.caption(f"（同グループの参考データ: n={sample_size}件）")
+                if sample_size < 30:
+                    st.caption(
+                        "※ 参考データの件数が少ないため、相対位置は参考値としてご覧ください。"
+                    )
+            else:
+                st.info("この性別・年代に対応する参考データがありません。")
+        else:
+            st.info("性別が未登録のため、同年代・同性との比較は表示できません。")
     else:
-        st.info("動脈硬化リスクのデータがありません。")
+        st.info("血管健康リスクのデータがありません。")
 
     ### ★★★ ここに脚注を追加 ★★★
     st.caption("※ 各リスクスコアは0から1の範囲で算出され、1に近いほどAIが推定するリスクが高いことを示します。")
@@ -506,6 +547,25 @@ else:
         """
         問診と左右の眼の結果からPDFレポートを生成する関数（レイアウト＆バグ修正版）
         """
+        def wrap_pdf_text(text: str, max_chars: int = 48) -> list[str]:
+            lines = []
+            remaining = text
+            while remaining:
+                if len(remaining) <= max_chars:
+                    lines.append(remaining)
+                    break
+                split_at = max(
+                    remaining.rfind("。", 0, max_chars + 1),
+                    remaining.rfind("、", 0, max_chars + 1),
+                )
+                if split_at <= 0:
+                    split_at = max_chars
+                else:
+                    split_at += 1
+                lines.append(remaining[:split_at])
+                remaining = remaining[split_at:].lstrip()
+            return lines
+
         buffer = io.BytesIO()
         p = canvas.Canvas(buffer, pagesize=A4)
         width, height = A4
@@ -548,7 +608,7 @@ else:
         p.setFont('IPAexGothic', 10)
         p.drawString(25 * mm, y_cursor, f"性別: {questionnaire_data.get('gender', '-')}")
         p.drawString(70 * mm, y_cursor, f"誕生日: {questionnaire_data.get('bday', '-')}")
-        p.drawString(120 * mm, y_cursor, f"実年齢: {real_age} 歳")
+        p.drawString(120 * mm, y_cursor, f"撮影時年齢: {real_age} 歳")
         y_cursor -= 15 * mm
         
         # --- 撮影画像 ---
@@ -604,18 +664,86 @@ else:
             p.drawString(120 * mm, y_cursor, f"左眼: {left_eye_data.get('glaucoma_risk'):.2f}")
         y_cursor -= 12 * mm
 
-        # 動脈硬化リスク
+        # 血管健康リスク
         scores = []
         if right_eye_data and right_eye_data.get("atherosclerosis_risk") is not None:
             scores.append(right_eye_data["atherosclerosis_risk"])
         if left_eye_data and left_eye_data.get("atherosclerosis_risk") is not None:
             scores.append(left_eye_data["atherosclerosis_risk"])
-        avg_score = (sum(scores) / len(scores)) if scores else -1.0 # 念のためfloatに
+        avg_score = (sum(scores) / len(scores)) if scores else -1.0
 
         p.setFont('IPAexGothic', 11)
-        p.drawString(25 * mm, y_cursor, "動脈硬化リスク")
+        p.drawString(25 * mm, y_cursor, "血管健康リスク")
         p.setFont('IPAexGothic', 10)
-        p.drawString(70 * mm, y_cursor, f"左右平均: {average_score:.2f}")
+        if avg_score >= 0:
+            p.drawString(70 * mm, y_cursor, f"左右平均: {avg_score:.2f}")
+        y_cursor -= 12 * mm
+
+        if avg_score >= 0:
+            gender = questionnaire_data.get("gender")
+            if gender in ("M", "F"):
+                age_group = get_age_group(real_age)
+                ref_data = lookup_percentiles(gender, age_group)
+                if ref_data:
+                    percentile = score_to_percentile(avg_score, ref_data["percentiles"])
+                    peer_label = format_peer_group_label(gender, age_group)
+                    sample_size = ref_data["sample_size"]
+
+                    if y_cursor < 70 * mm:
+                        p.showPage()
+                        y_cursor = height - 20 * mm
+
+                    p.setFont('IPAexGothic', 10)
+                    p.drawString(25 * mm, y_cursor, "同年代・同性との比較")
+                    y_cursor -= 6 * mm
+                    p.setFont('IPAexGothic', 8)
+                    p.drawString(
+                        25 * mm,
+                        y_cursor,
+                        "※ 上のスコア（絶対評価）とは別の指標です。",
+                    )
+                    y_cursor -= 5 * mm
+                    p.drawString(
+                        25 * mm,
+                        y_cursor,
+                        "絶対的なリスクが低くても、同年代・同性の中での位置は異なる場合があります。",
+                    )
+                    y_cursor -= 8 * mm
+
+                    bar_height = 8 * mm
+                    bar_width = 130 * mm
+                    bar_x = 25 * mm
+                    bar_y = y_cursor - bar_height
+                    draw_athero_gauge_pdf(
+                        p, bar_x, bar_y, bar_width, bar_height, percentile
+                    )
+                    y_cursor = bar_y - 10 * mm
+
+                    p.setFont('IPAexGothic', 9)
+                    comparison_text = format_relative_comparison_plain_text(
+                        peer_label, percentile
+                    )
+                    for line in wrap_pdf_text(comparison_text):
+                        if y_cursor < 40 * mm:
+                            p.showPage()
+                            y_cursor = height - 20 * mm
+                        p.drawString(25 * mm, y_cursor, line)
+                        y_cursor -= 5 * mm
+
+                    p.setFont('IPAexGothic', 8)
+                    p.drawString(
+                        25 * mm,
+                        y_cursor,
+                        f"（同グループの参考データ: n={sample_size}件）",
+                    )
+                    y_cursor -= 5 * mm
+                    if sample_size < 30:
+                        p.drawString(
+                            25 * mm,
+                            y_cursor,
+                            "※ 参考データの件数が少ないため、相対位置は参考値としてご覧ください。",
+                        )
+                        y_cursor -= 5 * mm
         
         # --- フッター / 注意事項 ---
         p.setFont('IPAexGothic', 9)
