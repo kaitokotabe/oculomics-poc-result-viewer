@@ -387,7 +387,7 @@ else:
     capture_date = datetime.datetime.fromisoformat(capture_datetime_str).date()
     real_age = (
         capture_date.year - birth_date.year
-        - ((capture_date.month, capture_date.day) < (birth_date.month, birth_date.day))
+- ((capture_date.month, capture_date.day) < (birth_date.month, birth_date.day))
     )
 
     st.warning("⚠️ この結果はAIによる健康リスク推定です。診断ではありません。こちらは現在東北大学において開発中のアルゴリズムを使用しております。")
@@ -462,16 +462,32 @@ else:
     st.markdown("---")
 
     # 2. リスク評価
-    def risk_level(score: float) -> str:
-        if score < 0.3: return "low"
-        elif score < 0.7: return "medium"
-        else: return "high"
-    def render_risk(label: str, score: float):
-        level = risk_level(score)
+    def risk_level(score: float, risk_type: str = "glaucoma") -> str:
+        if risk_type == "atherosclerosis":
+            if score <= 0.02:
+                return "low"
+            elif score <= 0.1:
+                return "medium"
+            else:
+                return "high"
+        else:
+            if score < 0.3:
+                return "low"
+            elif score < 0.7:
+                return "medium"
+            else:
+                return "high"
+
+    def render_risk(label: str, score: float, risk_type: str = "glaucoma"):
+        level = risk_level(score, risk_type=risk_type)
+        score_str = f"{score:.3f}" if risk_type == "atherosclerosis" else f"{score:.2f}"
         st.markdown(f"**{label}**")
-        if level == "low": st.success(f"スコア: {score:.2f} (リスク：低 🟢 )")
-        elif level == "medium": st.warning(f"スコア: {score:.2f} (リスク：中 🟡 )")
-        else: st.error(f"スコア: {score:.2f} (リスク：高 🔴 )")
+        if level == "low":
+            st.success(f"スコア: {score_str} (リスク：低 🟢 )")
+        elif level == "medium":
+            st.warning(f"スコア: {score_str} (リスク：中 🟡 )")
+        else:
+            st.error(f"スコア: {score_str} (リスク：高 🔴 )")
 
     # 2a. 視界の健康リスク (左右別々に表示)
     st.markdown("### 視界の健康リスク")
@@ -499,7 +515,7 @@ else:
 
     if atherosclerosis_scores:
         average_score = sum(atherosclerosis_scores) / len(atherosclerosis_scores)
-        render_risk("左右の平均", average_score)
+        render_risk("左右の平均", average_score, risk_type="atherosclerosis")
 
         st.markdown("#### 同年代・同性との比較")
         st.caption(
@@ -676,7 +692,7 @@ else:
         p.drawString(25 * mm, y_cursor, "血管健康リスク")
         p.setFont('IPAexGothic', 10)
         if avg_score >= 0:
-            p.drawString(70 * mm, y_cursor, f"左右平均: {avg_score:.2f}")
+            p.drawString(70 * mm, y_cursor, f"左右平均: {avg_score:.3f}")
         y_cursor -= 12 * mm
 
         if avg_score >= 0:
